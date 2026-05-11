@@ -4,23 +4,44 @@ import { sendWhatsAppMessage } from "./whatsapp";
 import { generateAiReply, buildGroqMessages } from "./groq";
 import { emitToOrg } from "./socket-emitter";
 import { extractFirstMessage, WebhookPayload } from "@/schemas/webhook.schema";
-import type { Conversation, Lead, Message, Organization } from "@prisma/client";
 
-/**
- * Main incoming message processing pipeline.
- *
- * Flow:
- * 1. Extract message data from webhook payload
- * 2. Upsert Lead (by phone + organizationId)
- * 3. Upsert Conversation (by leadId + organizationId)
- * 4. Save incoming Message (senderType: "customer")
- * 5. Update Conversation.lastMessage + updatedAt
- * 6. Emit real-time event to dashboard
- * 7. If AI enabled → generate reply → save → send via Meta API → emit
- *
- * This function is called from the webhook POST handler which wraps it
- * in a try/catch that always returns HTTP 200 to Meta.
- */
+// Local types (mirrors Prisma models without requiring generated client)
+interface Lead {
+  id: string;
+  organizationId: string;
+  phone: string;
+  name: string | null;
+  status: string;
+  tags: string[];
+  notes: string | null;
+  assignedTo: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface Conversation {
+  id: string;
+  organizationId: string;
+  leadId: string;
+  aiEnabled: boolean;
+  lastMessage: string | null;
+  unreadCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Pipeline flow:
+// 1. Extract message data from webhook payload
+// 2. Upsert Lead (by phone + organizationId)
+// 3. Upsert Conversation (by leadId + organizationId)
+// 4. Save incoming Message (senderType: "customer")
+// 5. Update Conversation.lastMessage + updatedAt
+// 6. Emit real-time event to dashboard
+// 7. If AI enabled → generate reply → save → send via Meta API → emit
+//
+// Called from the webhook POST handler which wraps it in a try/catch
+// that always returns HTTP 200 to Meta.
+
 export async function processIncomingMessage(
   orgId: string,
   payload: WebhookPayload
@@ -28,14 +49,13 @@ export async function processIncomingMessage(
   // Handle status update payloads (delivered/read/failed)
   const statusEntry = payload.entry?.[0]?.changes?.[0]?.value?.statuses?.[0];
   if (statusEntry) {
-    await processStatusUpdate(statusEntry);
+    await processStatusUpdate(statusEntry as { id: string; status: string });
     return;
   }
 
   // Extract the first text message from the payload
   const messageData = extractFirstMessage(payload);
   if (!messageData) {
-    // Not a text message (image, audio, etc.) — skip for MVP
     return;
   }
 
@@ -105,7 +125,10 @@ export async function processIncomingMessage(
   try {
     const groqMessages = buildGroqMessages(
       recentMessages,
-      { aiPrompt: org.aiPrompt ?? "You are a helpful customer service assistant.", aiLanguage: org.aiLanguage ?? "auto" },
+      {
+        aiPrompt: org.aiPrompt ?? "You are a helpful customer service assistant.",
+        aiLanguage: org.aiLanguage ?? "auto",
+      },
       text
     );
     aiReplyText = await generateAiReply(groqMessages);
@@ -115,7 +138,7 @@ export async function processIncomingMessage(
       orgId,
       conversationId: conversation.id,
     });
-    return; // Skip AI reply — pipeline continues without crashing
+    return;
   }
 
   // Save AI message
@@ -146,7 +169,6 @@ export async function processIncomingMessage(
         phone,
         aiReplyText
       );
-      // Update message with the wamid from Meta
       await prisma.message.update({
         where: { id: aiMessage.id },
         data: { wamid: aiWamid },
@@ -157,7 +179,6 @@ export async function processIncomingMessage(
         orgId,
         messageId: aiMessage.id,
       });
-      // Mark message as failed
       await prisma.message.update({
         where: { id: aiMessage.id },
         data: { status: "failed" },
@@ -171,8 +192,6 @@ export async function processIncomingMessage(
     conversationId: conversation.id,
   });
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function upsertLead(
   organizationId: string,
@@ -190,7 +209,6 @@ async function upsertLead(
       status: "new",
     },
     update: {
-      // Update name if we now have it from WhatsApp contact profile
       ...(contactName ? { name: contactName } : {}),
     },
   });
@@ -200,14 +218,12 @@ async function upsertConversation(
   organizationId: string,
   leadId: string
 ): Promise<Conversation> {
-  // Find existing conversation for this lead
   const existing = await prisma.conversation.findFirst({
     where: { leadId, organizationId },
   });
 
   if (existing) return existing;
 
-  // Create new conversation
   return prisma.conversation.create({
     data: { organizationId, leadId },
   });

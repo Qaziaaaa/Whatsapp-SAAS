@@ -69,7 +69,7 @@ export async function POST(request: Request) {
       select: { id: true, waPhoneNumberId: true, waAppSecret: true },
     });
 
-    const matchedOrg = orgs.find((org) => {
+    const matchedOrg = orgs.find((org: { id: string; waPhoneNumberId: string | null; waAppSecret: string | null }) => {
       try {
         return decrypt(org.waPhoneNumberId!) === phoneNumberId;
       } catch {

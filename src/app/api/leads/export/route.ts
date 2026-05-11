@@ -31,7 +31,7 @@ export async function GET() {
     });
 
     const header = "id,phone,name,status,tags,notes,assignedTo,createdAt,updatedAt";
-    const rows = leads.map((l) =>
+    const rows = leads.map((l: { id: string; phone: string; name: string | null; status: string; tags: string[]; notes: string | null; assignedTo: string | null; createdAt: Date; updatedAt: Date }) =>
       [
         l.id,
         l.phone,

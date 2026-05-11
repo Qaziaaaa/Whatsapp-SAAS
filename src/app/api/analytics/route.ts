@@ -74,7 +74,7 @@ export async function GET(request: Request) {
       totalMessagesSent,
       totalMessagesReceived,
       aiReplyCount,
-      topConversations: topConversationsRaw.map((r) => ({
+      topConversations: topConversationsRaw.map((r: { conversationId: string; _count: { id: number } }) => ({
         conversationId: r.conversationId,
         messageCount: r._count.id,
       })),

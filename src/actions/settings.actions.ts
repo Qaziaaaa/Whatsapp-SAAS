@@ -4,6 +4,10 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { generateSlug } from "@/lib/utils";
+import { encrypt } from "@/lib/crypto";
+import { requireAuthContext } from "@/lib/auth";
+import { requireAdmin } from "@/lib/permissions";
+import { WhatsAppCredentialsSchema, AiSettingsSchema } from "@/schemas/settings.schema";
 import { z } from "zod";
 
 const CreateOrgSchema = z.object({
@@ -68,4 +72,93 @@ export async function createOrganization(
   });
 
   redirect("/dashboard/inbox");
+}
+
+/**
+ * Saves WhatsApp credentials for the organization.
+ * Encrypts all credential values before storing in the database.
+ */
+export async function saveWhatsAppCredentials(
+  formData: FormData
+): Promise<ActionResult> {
+  try {
+    const ctx = await requireAuthContext();
+    if (!ctx) return { success: false, error: "Not authenticated" };
+    requireAdmin(ctx.role);
+
+    const raw = {
+      phoneNumberId: formData.get("phoneNumberId"),
+      accessToken: formData.get("accessToken"),
+      appSecret: formData.get("appSecret"),
+    };
+
+    const parsed = WhatsAppCredentialsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid input",
+      };
+    }
+
+    await prisma.organization.update({
+      where: { id: ctx.organizationId },
+      data: {
+        waPhoneNumberId: encrypt(parsed.data.phoneNumberId),
+        waAccessToken: encrypt(parsed.data.accessToken),
+        waAppSecret: encrypt(parsed.data.appSecret),
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    if (error instanceof Error && error.name === "ForbiddenError") {
+      return { success: false, error: error.message };
+    }
+    console.error("saveWhatsAppCredentials error:", error);
+    return { success: false, error: "Failed to save credentials" };
+  }
+}
+
+/**
+ * Saves AI configuration for the organization.
+ */
+export async function saveAiSettings(
+  formData: FormData
+): Promise<ActionResult> {
+  try {
+    const ctx = await requireAuthContext();
+    if (!ctx) return { success: false, error: "Not authenticated" };
+    requireAdmin(ctx.role);
+
+    const raw = {
+      aiPrompt: formData.get("aiPrompt"),
+      aiLanguage: formData.get("aiLanguage"),
+      aiEnabled: formData.get("aiEnabled") === "true",
+    };
+
+    const parsed = AiSettingsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: parsed.error.issues[0]?.message ?? "Invalid input",
+      };
+    }
+
+    await prisma.organization.update({
+      where: { id: ctx.organizationId },
+      data: {
+        aiPrompt: parsed.data.aiPrompt,
+        aiLanguage: parsed.data.aiLanguage,
+        aiEnabled: parsed.data.aiEnabled,
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    if (error instanceof Error && error.name === "ForbiddenError") {
+      return { success: false, error: error.message };
+    }
+    console.error("saveAiSettings error:", error);
+    return { success: false, error: "Failed to save AI settings" };
+  }
 }
