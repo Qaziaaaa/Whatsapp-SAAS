@@ -1,0 +1,145 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  // AI configuration
+  aiPrompt    String   @default("You are a helpful customer service assistant.")
+  aiLanguage  String   @default("auto")
+  aiEnabled   Boolean  @default(true)
+  // WhatsApp credentials (AES-256-GCM encrypted)
+  waPhoneNumberId  String?
+  waAccessToken    String?
+  waAppSecret      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members       OrganizationMember[]
+  leads         Lead[]
+  conversations Conversation[]
+
+  @@map("organizations")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique
+  email     String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships OrganizationMember[]
+
+  @@index([clerkId])
+  @@map("users")
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           Role     @default(agent)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@map("organization_members")
+}
+
+enum Role {
+  owner
+  admin
+  agent
+}
+
+model Lead {
+  id             String     @id @default(cuid())
+  organizationId String
+  phone          String
+  name           String?
+  status         LeadStatus @default(new)
+  tags           String[]   @default([])
+  notes          String?
+  assignedTo     String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([organizationId, phone])
+  @@index([organizationId])
+  @@index([phone])
+  @@map("leads")
+}
+
+enum LeadStatus {
+  new
+  interested
+  follow_up
+  won
+  lost
+}
+
+model Conversation {
+  id             String   @id @default(cuid())
+  organizationId String
+  leadId         String
+  aiEnabled      Boolean  @default(true)
+  lastMessage    String?
+  unreadCount    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  messages     Message[]
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  organizationId String
+  senderType     SenderType
+  senderId       String?
+  content        String
+  wamid          String?
+  status         MessageStatus @default(sent)
+  createdAt      DateTime      @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([organizationId])
+  @@map("messages")
+}
+
+enum SenderType {
+  customer
+  agent
+  ai
+}
+
+enum MessageStatus {
+  sent
+  delivered
+  read
+  failed
+}
